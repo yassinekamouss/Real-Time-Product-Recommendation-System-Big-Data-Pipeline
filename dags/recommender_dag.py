@@ -1,7 +1,13 @@
+import os
 from datetime import datetime, timedelta
 from airflow import DAG
+from airflow.models import Variable
 from airflow.operators.bash import BashOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+
+# Configuration from environment or Airflow Variables
+S3_BUCKET = Variable.get("S3_DATA_LAKE_BUCKET", default_var=os.getenv("S3_DATA_LAKE_BUCKET", "recommender-system-data-lake-dev"))
+MLFLOW_URI = Variable.get("MLFLOW_TRACKING_URI", default_var=os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-service.mlops.svc.cluster.local:5000"))
 
 default_args = {
     'owner': 'airflow',
@@ -73,6 +79,10 @@ except Exception as e:
             'spark.executor.memory': '2g', # Aligné avec ton docker-compose
             'spark.executor.cores': '2'
         },
+        env_vars={
+            "S3_DATA_LAKE_BUCKET": S3_BUCKET,
+            "MLFLOW_TRACKING_URI": MLFLOW_URI
+        },
         verbose=True
     )
 
@@ -88,6 +98,10 @@ except Exception as e:
             'spark.driver.memory': '1g',
             'spark.executor.memory': '2g',
         },
+        env_vars={
+            "S3_DATA_LAKE_BUCKET": S3_BUCKET,
+            "MLFLOW_TRACKING_URI": MLFLOW_URI
+        },
         verbose=True
     )
 
@@ -95,22 +109,12 @@ except Exception as e:
     # L'ORCHESTRATION PARALLÈLE (LE SECRET D'UN BON DAG)
     # =========================================================
     
-    check_models = BashOperator(
-        task_id='check_models_exist',
-        bash_command="""
-            for path in /opt/spark/models/als_model/metadata \
-                        /opt/spark/models/user_indexer/metadata \
-                        /opt/spark/models/item_indexer/metadata; do
-                if [ ! -d "$path" ]; then
-                    echo "ERREUR: Modèle manquant: $path"
-                    exit 1
-                fi
-            done
-            echo "Tous les modèles sont présents."
-        """,
+    check_mlflow = BashOperator(
+        task_id='check_mlflow_health',
+        bash_command=f"curl -f {MLFLOW_URI}/health || echo 'MLflow tracking server not reachable' && exit 1",
     )
 
     # Nouveau pipeline
     wait_for_kafka >> create_kafka_topic
     create_kafka_topic >> ingest_data
-    create_kafka_topic >> train_model >> check_models >> start_streaming
+    create_kafka_topic >> train_model >> check_mlflow >> start_streaming
