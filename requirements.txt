@@ -1,0 +1,8 @@
+pyspark
+apache-airflow-providers-apache-spark
+kafka-python-ng
+pandas
+numpy
+fastapi
+uvicorn
+psycopg2-binary
