@@ -3,5 +3,12 @@ FROM apache/spark:3.5.1
 # On passe en root
 USER root
 
-# Installation de la librairie pour le streaming
-RUN pip install --no-cache-dir psycopg2-binary numpy pandas
+# Installation des librairies pour S3 et MLflow
+RUN pip install --no-cache-dir psycopg2-binary numpy pandas mlflow boto3
+
+# Téléchargement des JARs AWS (Hadoop-AWS et AWS SDK Bundle)
+# Note: Versions match Spark 3.5.1 (Hadoop 3.3.4)
+RUN curl -o /opt/spark/jars/hadoop-aws-3.3.4.jar https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar && \
+    curl -o /opt/spark/jars/aws-java-sdk-bundle-1.12.262.jar https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
+
+USER spark
