@@ -5,9 +5,9 @@ from airflow.models import Variable
 from airflow.operators.bash import BashOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 
-# Configuration from environment or Airflow Variables
-S3_BUCKET = Variable.get("S3_DATA_LAKE_BUCKET", default_var=os.getenv("S3_DATA_LAKE_BUCKET", "recommender-system-data-lake-dev"))
-MLFLOW_URI = Variable.get("MLFLOW_TRACKING_URI", default_var=os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-service.mlops.svc.cluster.local:5000"))
+# Configuration from environment or Airflow Variables (Templated to avoid DB hits at parse time)
+S3_BUCKET = "{{ macros.Variable.get('S3_DATA_LAKE_BUCKET', default_var='" + os.getenv("S3_DATA_LAKE_BUCKET", "amazon-recommender-datalake") + "') }}"
+MLFLOW_URI = "{{ macros.Variable.get('MLFLOW_TRACKING_URI', default_var='" + os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-service.mlops.svc.cluster.local:5000") + "') }}"
 
 default_args = {
     'owner': 'airflow',
@@ -25,6 +25,7 @@ with DAG(
     schedule_interval='@daily',
     start_date=datetime(2026, 4, 1),
     catchup=False,
+    max_active_runs=1,
     tags=['spark', 'machine-learning', 'streaming', 'production'],
 ) as dag:
 
@@ -111,10 +112,10 @@ except Exception as e:
     
     check_mlflow = BashOperator(
         task_id='check_mlflow_health',
-        bash_command=f"curl -f {MLFLOW_URI}/health || echo 'MLflow tracking server not reachable' && exit 1",
+        bash_command="curl -fsSL " + MLFLOW_URI + "/health || (echo 'MLflow tracking server not reachable' && exit 1)",
     )
 
     # Nouveau pipeline
     wait_for_kafka >> create_kafka_topic
     create_kafka_topic >> ingest_data
-    create_kafka_topic >> train_model >> check_mlflow >> start_streaming
+    create_kafka_topic >> check_mlflow >> train_model >> start_streaming

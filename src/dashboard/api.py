@@ -1,11 +1,16 @@
 import os
 import json
 import psycopg2
+import mlflow
+from mlflow.tracking import MlflowClient
 from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+
+# MLflow Tracking URI
+MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-service.mlops.svc.cluster.local:5000")
 
 # Database connection parameters via environment variables
 DB_PARAMS = {
@@ -123,26 +128,34 @@ def get_recommendations(user_id: str):
 @app.get("/api/model/metrics")
 def get_model_metrics():
     """
-    Récupère les métriques du modèle MLOps (RMSE, Rank, RegParam) à partir de metrics.json.
+    Récupère les métriques du modèle MLOps (RMSE, Rank, RegParam) à partir de MLflow.
     """
-    metrics_path = "/opt/spark/models/als_model/metrics.json"
-    if os.path.exists(metrics_path):
-        with open(metrics_path, "r") as f:
-            return json.load(f)
-    return {"rmse": "N/A", "rank": "N/A", "regParam": "N/A", "error": "Fichier introuvable"}
+    client = MlflowClient(tracking_uri=MLFLOW_URI)
+    try:
+        # Get latest version from registry
+        latest_versions = client.get_latest_versions("ProductRecommender", stages=["None"])
+        if not latest_versions:
+            return {"rmse": "N/A", "rank": "N/A", "regParam": "N/A", "error": "Aucune version trouvée"}
+        
+        latest_version = latest_versions[0]
+        run_id = latest_version.run_id
+        run = client.get_run(run_id)
+        return run.data.metrics
+    except Exception as e:
+        return {"rmse": "N/A", "rank": "N/A", "regParam": "N/A", "error": str(e)}
 
 @app.get("/api/model/versions")
 def get_model_versions():
     """
-    Scanne le répertoire d'archives pour renvoyer la liste des modèles enregistrés.
+    Récupère la liste des versions du modèle à partir du Model Registry MLflow.
     """
-    archive_dir = "/opt/spark/models/archive/"
-    versions = []
-    if os.path.exists(archive_dir):
-        for item in os.listdir(archive_dir):
-            if os.path.isdir(os.path.join(archive_dir, item)) and item.startswith("als_model_"):
-                versions.append(item.replace("als_model_", ""))
-    return sorted(versions, reverse=True)
+    client = MlflowClient(tracking_uri=MLFLOW_URI)
+    try:
+        versions = client.get_latest_versions("ProductRecommender")
+        return [v.version for v in versions]
+    except Exception as e:
+        print(f"Error fetching model versions: {e}")
+        return []
 
 @app.get("/api/streaming/stats")
 def get_streaming_stats():

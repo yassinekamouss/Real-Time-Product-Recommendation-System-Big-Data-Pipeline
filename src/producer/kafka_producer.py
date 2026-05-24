@@ -19,8 +19,9 @@ logger = logging.getLogger('KafkaProducer')
 KAFKA_BROKER = os.environ.get('KAFKA_BROKER', 'kafka:29092')
 TOPIC_NAME = 'user-ratings'
 
-# Chemin absolu mis à jour pour correspondre au nouveau volume partagé Airflow/Spark
-CSV_FILE_PATH = '/opt/spark/data/Reviews.csv'
+# Dataset configuration
+S3_BUCKET = os.environ.get('S3_DATA_LAKE_BUCKET', 'amazon-recommender-datalake')
+CSV_FILE_PATH = os.environ.get('CSV_FILE_PATH', '/opt/spark/data/Reviews.csv')
 CHUNK_SIZE = 50000
 
 def create_producer():
@@ -61,12 +62,16 @@ def process_and_send_data(producer):
     """Read CSV in chunks and send to Kafka topic with random delays."""
     logger.info(f"Starting to process file: {CSV_FILE_PATH}")
     
-    if not os.path.exists(CSV_FILE_PATH):
+    # Check if path is S3 or local
+    is_s3 = CSV_FILE_PATH.startswith('s3://') or CSV_FILE_PATH.startswith('s3a://')
+    
+    if not is_s3 and not os.path.exists(CSV_FILE_PATH):
         logger.error(f"File not found: {CSV_FILE_PATH}. Please ensure the dataset is in the correct location.")
         sys.exit(1)
 
     try:
         # Read the CSV file in chunks to optimize memory usage
+        # Note: pd.read_csv supports S3 paths if s3fs is installed
         for chunk in pd.read_csv(CSV_FILE_PATH, chunksize=CHUNK_SIZE):
             required_cols = ['Id', 'UserId', 'ProductId', 'Score', 'Time']
             
