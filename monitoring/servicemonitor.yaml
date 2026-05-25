@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: api-recommendation-monitor
+  namespace: mlops
+  labels:
+    release: prometheus-stack # Match the Helm release name if applicable
+spec:
+  selector:
+    matchLabels:
+      app: api-recommendation
+  namespaceSelector:
+    matchNames:
+      - mlops
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s

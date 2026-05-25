@@ -8,6 +8,7 @@ from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # MLflow Tracking URI
 
@@ -44,6 +45,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize Prometheus Instrumentator
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", should_gzip=True)
 
 @app.get("/")
 def serve_dashboard():
