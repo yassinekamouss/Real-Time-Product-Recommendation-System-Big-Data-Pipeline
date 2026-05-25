@@ -5,11 +5,12 @@ import mlflow
 from mlflow.tracking import MlflowClient
 from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 # MLflow Tracking URI
+
 MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-service.mlops.svc.cluster.local:5000")
 
 # Database connection parameters via environment variables
@@ -180,4 +181,27 @@ def get_streaming_stats():
             cur.close()
         if conn:
             db_pool.putconn(conn)
+
+@app.get("/health")
+def health_check():
+    """
+    Health check endpoint for Kubernetes liveness and readiness probes.
+    Checks the status of the database connection pool.
+    """
+    health_status = {"status": "healthy", "database": "up"}
+    if not db_pool:
+        health_status["database"] = "down"
+        health_status["status"] = "unhealthy"
+    else:
+        conn = None
+        try:
+            conn = db_pool.getconn()
+            db_pool.putconn(conn)
+        except Exception:
+            health_status["database"] = "down"
+            health_status["status"] = "unhealthy"
+            
+    if health_status["status"] == "unhealthy":
+        raise HTTPException(status_code=503, detail=health_status)
+    return health_status
 
