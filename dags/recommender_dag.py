@@ -3,11 +3,13 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.models import Variable
 from airflow.operators.bash import BashOperator
-from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
+from airflow.providers.cncf.kubernetes.operators.spark_kubernetes import SparkKubernetesOperator
+from airflow.providers.cncf.kubernetes.sensors.spark_kubernetes import SparkKubernetesSensor
 
 # Configuration from environment or Airflow Variables (Templated to avoid DB hits at parse time)
-S3_BUCKET = "{{ macros.Variable.get('S3_DATA_LAKE_BUCKET', default_var='" + os.getenv("S3_DATA_LAKE_BUCKET", "amazon-recommender-datalake") + "') }}"
-MLFLOW_URI = "{{ macros.Variable.get('MLFLOW_TRACKING_URI', default_var='" + os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-service.mlops.svc.cluster.local:5000") + "') }}"
+S3_BUCKET = "{{ var.value.S3_DATA_LAKE_BUCKET }}"
+MLFLOW_URI = "{{ var.value.MLFLOW_TRACKING_URI }}"
 
 default_args = {
     'owner': 'airflow',
@@ -21,18 +23,18 @@ default_args = {
 with DAG(
     'amazon_recommender_pipeline',
     default_args=default_args,
-    description='Pipeline Parallèle: Ingestion Temps Réel & Apprentissage ALS',
+    description='Pipeline Cloud-Native: Ingestion & Apprentissage sur EKS',
     schedule_interval='@daily',
     start_date=datetime(2026, 4, 1),
     catchup=False,
     max_active_runs=1,
-    tags=['spark', 'machine-learning', 'streaming', 'production'],
+    tags=['kubernetes', 'spark', 'mlops', 'production'],
 ) as dag:
 
     # 1. Vérification de la disponibilité de Kafka
     wait_for_kafka = BashOperator(
         task_id='wait_for_kafka',
-        bash_command='nc -z kafka 29092',
+        bash_command='nc -z kafka 29092', # À ajuster selon le DNS interne si nécessaire
         retries=5,
         retry_delay=timedelta(seconds=15)
     )
@@ -52,62 +54,51 @@ except TopicAlreadyExistsError:
     print('Le Topic existe déjà.')
 except Exception as e:
     print('Erreur fatale de création du topic:', e)
-    sys.exit(1) # <-- INDISPENSABLE pour qu'Airflow détecte l'échec
+    sys.exit(1)
 "'''
     )
 
     # ---------------------------------------------------------
     # BRANCHE 1 : LE FLUX DE DONNÉES (SIMULATION TEMPS RÉEL)
     # ---------------------------------------------------------
-    ingest_data = BashOperator(
+    ingest_data = KubernetesPodOperator(
         task_id='ingest_data_producer',
-        bash_command='python /opt/airflow/src/producer/kafka_producer.py',
+        name='kafka-producer',
+        namespace='default',
+        image='amazon-recommender-producer:latest',
+        env_vars={
+            'KAFKA_BROKER': "{{ var.value.kafka_broker_url }}",
+        },
+        get_logs=True,
+        is_delete_operator_pod=True
     )
 
     # ---------------------------------------------------------
     # BRANCHE 2 : INTELLIGENCE ARTIFICIELLE & INFERENCE
     # ---------------------------------------------------------
-    # Soumission au cluster Spark (et non en local)
-    train_model = SparkSubmitOperator(
+    train_model = SparkKubernetesOperator(
         task_id='train_als_model',
-        conn_id='spark_default', 
-        application='/opt/airflow/src/spark/train_model.py',
-        name='Batch_Training_ALS',
-        # SUPPRESSION DU MASTER='local[*]' POUR UTILISER LA CONN_ID OU CONF
-        conf={
-            'spark.master': 'spark://spark-master:7077', # Force l'utilisation du cluster Docker
-            'spark.driver.memory': '1g',
-            'spark.executor.memory': '2g', # Aligné avec ton docker-compose
-            'spark.executor.cores': '2'
-        },
-        env_vars={
-            "S3_DATA_LAKE_BUCKET": S3_BUCKET,
-            "MLFLOW_TRACKING_URI": MLFLOW_URI
-        },
-        verbose=True
+        namespace='default',
+        application_file='k8s/spark/train_job.yaml',
+        do_xcom_push=True,
     )
 
-    start_streaming = SparkSubmitOperator(
+    train_model_sensor = SparkKubernetesSensor(
+        task_id='train_als_model_sensor',
+        namespace='default',
+        application_name="{{ task_instance.xcom_pull(task_ids='train_als_model')['metadata']['name'] }}",
+        poke_interval=10,
+    )
+
+    start_streaming = SparkKubernetesOperator(
         task_id='start_realtime_streaming',
-        conn_id='spark_default',
-        application='/opt/airflow/src/spark/streaming_recommender.py',
-        # Packages nécessaires pour lire Kafka depuis Spark Structured Streaming
-        packages='org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1',
-        name='Streaming_Inference',
-        conf={
-            'spark.master': 'spark://spark-master:7077',
-            'spark.driver.memory': '1g',
-            'spark.executor.memory': '2g',
-        },
-        env_vars={
-            "S3_DATA_LAKE_BUCKET": S3_BUCKET,
-            "MLFLOW_TRACKING_URI": MLFLOW_URI
-        },
-        verbose=True
+        namespace='default',
+        application_file='k8s/spark/streaming_job.yaml',
+        do_xcom_push=True,
     )
 
     # =========================================================
-    # L'ORCHESTRATION PARALLÈLE (LE SECRET D'UN BON DAG)
+    # L'ORCHESTRATION PARALLÈLE
     # =========================================================
     
     check_mlflow = BashOperator(
@@ -115,7 +106,7 @@ except Exception as e:
         bash_command="curl -fsSL " + MLFLOW_URI + "/health || (echo 'MLflow tracking server not reachable' && exit 1)",
     )
 
-    # Nouveau pipeline
+    # Pipeline
     wait_for_kafka >> create_kafka_topic
     create_kafka_topic >> ingest_data
-    create_kafka_topic >> check_mlflow >> train_model >> start_streaming
+    create_kafka_topic >> check_mlflow >> train_model >> train_model_sensor >> start_streaming
