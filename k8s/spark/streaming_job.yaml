@@ -7,7 +7,7 @@ spec:
   type: Python
   pythonVersion: "3"
   mode: cluster
-  image: "amazon-recommender-spark:latest"
+  image: "DOCKERHUB_USERNAME_PLACEHOLDER/amazon-recommender-spark:latest"
   imagePullPolicy: Always
   mainApplicationFile: "local:///opt/spark/src/spark/streaming_recommender.py"
   sparkVersion: "3.5.1"

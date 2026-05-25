@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: api-recommendation
-        image: api-recommendation:latest # Update with actual registry path
+        image: DOCKERHUB_USERNAME_PLACEHOLDER/api-recommendation:latest # Update with actual registry path
         ports:
         - containerPort: 8000
         env:

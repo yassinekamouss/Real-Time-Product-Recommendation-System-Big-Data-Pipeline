@@ -1,0 +1,88 @@
+name: Deploy to EKS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: Lint Python Code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Lint with Ruff
+        uses: astral-sh/ruff-action@v1
+        with:
+          args: "check src/"
+
+  build-and-push:
+    name: Build and Push Images
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image_name: api-recommendation
+            context: .
+            dockerfile: Dockerfile # Assuming there's a main Dockerfile or specific ones
+          - image_name: amazon-recommender-producer
+            context: .
+            dockerfile: src/producer/Dockerfile
+          - image_name: amazon-recommender-spark
+            context: .
+            dockerfile: src/spark/Dockerfile
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image_name }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image_name }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to EKS
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update Kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ secrets.AWS_REGION }}
+
+      - name: Update Image Tags and Registries
+        run: |
+          find k8s/ -name "*.yaml" -exec sed -i "s|DOCKERHUB_USERNAME_PLACEHOLDER|${{ secrets.DOCKERHUB_USERNAME }}|g" {} +
+          find k8s/ -name "*.yaml" -exec sed -i "s|:latest|:${{ github.sha }}|g" {} +
+
+      - name: Deploy Manifests
+        run: |
+          kubectl apply -f k8s/ --recursive

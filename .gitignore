@@ -68,7 +68,7 @@ build/
 # ==========================================
 # Git
 # ==========================================
-.github/
+# .github/ (Removed from ignore to allow workflows)
 
 
 # Ignorer tous les logs d'exécution
@@ -79,3 +79,5 @@ logs/
 .opencode/
 .docs/*.pdf
 graphify-out/
+
+docs
