@@ -1,0 +1,25 @@
+executor: KubernetesExecutor
+
+postgresql:
+  enabled: false
+
+externalDatabase:
+  host: your-rds-endpoint
+  user: airflow
+  passwordSecret: rds-credentials
+  passwordSecretKey: password
+  database: airflow
+
+env:
+  - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+    valueFrom:
+      secretKeyRef:
+        name: airflow-db-conn
+        key: connection
+
+# Use the KubernetesExecutor
+config:
+  core:
+    executor: KubernetesExecutor
+  database:
+    sql_alchemy_conn: "postgresql+psycopg2://airflow:airflow_pass@your-rds-endpoint:5432/airflow" # Helm chart might need it here too depending on version

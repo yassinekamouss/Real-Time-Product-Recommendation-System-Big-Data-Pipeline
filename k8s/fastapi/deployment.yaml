@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-recommendation
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-recommendation
+  template:
+    metadata:
+      labels:
+        app: api-recommendation
+    spec:
+      containers:
+      - name: api-recommendation
+        image: api-recommendation:latest # Update with actual registry path
+        ports:
+        - containerPort: 8000
+        env:
+        - name: API_DB_HOST
+          value: "your-rds-endpoint.aws.com" # Placeholder
+        - name: API_DB_PORT
+          value: "5432"
+        - name: POSTGRES_DB
+          value: "airflow"
+        - name: POSTGRES_USER
+          value: "airflow"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rds-credentials
+              key: password
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          runAsUser: 1000
