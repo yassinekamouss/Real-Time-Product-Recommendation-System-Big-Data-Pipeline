@@ -28,7 +28,7 @@ The primary technical achievement is the migration from a monolithic Docker setu
 
 The architecture is built on five distinct tiers, ensuring high availability and elastic scalability.
 
-![Cloud Architecture](.docs/architecture_globale.png)
+![Cloud Architecture](.docs/architecture.png)
 
 ### The 5 Tiers of Production:
 1.  **Infrastructure (Terraform):** Fully automated provisioning of VPC, EKS, S3 Data Lake, and RDS PostgreSQL instances using Infrastructure as Code (IaC).
